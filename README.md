@@ -1,3 +1,7 @@
+# This is fork of superpowers
+This is fork of superpowers for opencode optimization for subagent.
+check detail: https://github.com/cropse/superpowers-opencode/blob/main/docs/README.opencode.md
+
 # Superpowers
 
 Superpowers is a complete software development methodology for your coding agents, built on top of a set of composable skills and some initial instructions that make sure your agent uses them.
@@ -228,7 +232,7 @@ already use it in another harness.
 - Tell OpenCode:
 
   ```
-  Fetch and follow instructions from https://raw.githubusercontent.com/obra/superpowers/refs/heads/main/.opencode/INSTALL.md
+  Fetch and follow instructions from https://github.com/cropse/superpowers-opencode/blob/main/.opencode/INSTALL.md
   ```
 
 - Detailed docs: [docs/README.opencode.md](docs/README.opencode.md)

@@ -119,12 +119,13 @@ On V2, pin `v6.4.1` or later; `v6.3.0` and earlier releases load only on V1.
 
 ## How It Works
 
-The plugin does two things, using host-flavor-specific APIs:
+The plugin does three things, using host-flavor-specific APIs where the two hosts differ:
 
 1. **Registers the skills directory** so OpenCode discovers all superpowers skills without symlinks or manual config.
     - **V1:** via the `config` hook, injecting into `config.skills.paths`
     - **V2:** via the `setup()` function using `ctx.skill.transform()` (V2 native API, confirmed active at runtime)
-2. **Injects bootstrap context** with a flavor-specific tool mapping: V1 sessions get the V1 tool names below, and V2 sessions get the V2 names.
+2. **Merges subagent definitions** from `superpowers.jsonc` (see [Model Tiers](#model-tiers)) into the live config, via the same V1 `config` hook used for skills registration. This is best-effort: a missing or malformed file never breaks startup.
+3. **Injects bootstrap context** with a flavor-specific tool mapping: V1 sessions get the V1 tool names below, and V2 sessions get the V2 names.
     - **V1:** via `experimental.chat.messages.transform` hook
     - **V2:** via `ctx.session.hook("context")` — the V2 equivalent (confirmed active at runtime)
 
@@ -170,6 +171,96 @@ Skills speak in actions rather than naming any one runtime's tools. The bootstra
 In short, V2 renamed `task` → `subagent` (the agent name moved from `subagent_type` to `agent`, and continuation happens by re-invoking with `sessionID`), `apply_patch` → `patch`, and `bash` → `shell`, and it dropped the todo tool entirely. The available mutation tools depend on the selected model: `patch` is available for selected GPT model IDs, while other models use `write` and `edit`.
 
 (V1 list verified against the installed OpenCode 1.18.x CLI's tool inventory; V2 list verified against the OpenCode 2.0.4 and 2.0.7 host contracts.)
+
+### Model Tiers
+
+Skills like `subagent-driven-development` select subagents by model tier
+("cheap model", "most capable model") rather than by tool name. Neither V1's
+`task` tool nor V2's `subagent` tool takes a model directly — both take an
+agent name — so the bootstrap maps tiers to fixed-model agents, using each
+flavor's own dispatch syntax:
+
+- Cheap model / mechanical tasks → `task(subagent_type="sp-cheap")` (V1) / `subagent(agent="sp-cheap")` (V2)
+- Standard / mid-tier model → `task(subagent_type="sp-standard")` (V1) / `subagent(agent="sp-standard")` (V2)
+- Most capable model → `task(subagent_type="sp-strong")` (V1) / `subagent(agent="sp-strong")` (V2)
+
+**These agents are not shipped by the plugin.** There are two ways to define
+them, and you can combine both:
+
+**Option 1 — your own `opencode.json` (or `opencode.jsonc`)**. Define each tier
+as a proper subagent with a `description` (required by OpenCode) and
+`mode: "subagent"` (what makes it dispatchable via the `task` tool):
+
+```json
+{
+  "agent": {
+    "sp-cheap": {
+      "description": "Mechanical, well-specified tasks",
+      "mode": "subagent",
+      "model": "<your cheap model>"
+    },
+    "sp-standard": {
+      "description": "Integration, multi-file coordination, judgment",
+      "mode": "subagent",
+      "model": "<your mid-tier model>"
+    },
+    "sp-strong": {
+      "description": "Architecture, complex debugging, escalation",
+      "mode": "subagent",
+      "model": "<your most capable model>"
+    }
+  }
+}
+```
+
+**Option 2 — `superpowers.jsonc` in your OpenCode config directory**
+(`~/.config/opencode/superpowers.jsonc`, or the directory in
+`$OPENCODE_CONFIG_DIR`). The plugin's `config` hook merges the `agent` block
+from this file into the live config, filling gaps only — **your own config
+wins per agent**, so you can override a tier without deleting the rest.
+Parsing is lenient (line and block comments supported), and a missing or
+malformed file is silently ignored so it never breaks startup:
+
+```jsonc
+{
+  // Model-tier subagents for superpowers skills
+  "agent": {
+    "sp-cheap": { "mode": "subagent", "model": "<your cheap model>" },
+    "sp-standard": { "mode": "subagent", "model": "<your mid-tier model>" },
+    "sp-strong": { "mode": "subagent", "model": "<your most capable model>" }
+  }
+}
+```
+
+If a tier is not defined anywhere, there is **no automatic fallback** — the
+`task` (V1) or `subagent` (V2) call fails. Define all three tiers, or tell
+your agent to use a configured agent of comparable capability.
+
+### Vendor-Diverse Reviewers (optional)
+
+Reviewers benefit from running on a **different model family** than the
+implementer that wrote the code — a model that shares the implementer's
+training inherits its blind spots. To enable this, define `sp-review-*`
+agents pinned to different vendors than the matching `sp-*` tier (in either
+`opencode.json` or `superpowers.jsonc`, same schema as above):
+
+```json
+{
+  "agent": {
+    "sp-review-cheap": { "description": "Reviewer, cheap tier", "mode": "subagent", "model": "<cheap model, different family than sp-cheap>" },
+    "sp-review-standard": { "description": "Reviewer, standard tier", "mode": "subagent", "model": "<mid-tier model, different family than sp-standard>" },
+    "sp-review-strong": { "description": "Reviewer, strong tier", "mode": "subagent", "model": "<strong model, different family than sp-strong>" }
+  }
+}
+```
+
+When these are defined, the bootstrap tells skills to dispatch reviews — task
+reviews, scoped re-reviews, and final whole-branch reviews — with
+`task(subagent_type="sp-review-X")` (V1) / `subagent(agent="sp-review-X")`
+(V2) instead of `sp-X`. If they are not defined, reviews use the matching
+`sp-X` tier agent.
+
+(Verified against the installed OpenCode CLI's tool inventory.)
 
 ## Troubleshooting
 

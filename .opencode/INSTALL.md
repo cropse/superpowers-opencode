@@ -41,6 +41,39 @@ Verify by asking: "Tell me about your superpowers"
 OpenCode uses its own plugin install. If you also use Claude Code, Codex, or
 another harness, install Superpowers separately for each one.
 
+## Configure model tier agents (optional)
+
+Some superpowers skills dispatch work to subagents by model tier — "cheap
+model" for mechanical tasks, "most capable model" for architecture and final
+review. On OpenCode these map to named agents: `sp-cheap`, `sp-standard`, and
+`sp-strong`. **The plugin does not ship them** — to enable tier dispatch,
+create `~/.config/opencode/superpowers.jsonc` (or
+`$OPENCODE_CONFIG_DIR/superpowers.jsonc`) with one definition per tier:
+
+```jsonc
+{
+  // Model-tier subagents for superpowers skills
+  "agent": {
+    "sp-cheap": { "description": "Mechanical, well-specified tasks", "mode": "subagent", "model": "<provider/your-cheap-model>" },
+    "sp-standard": { "description": "Integration, multi-file coordination, judgment", "mode": "subagent", "model": "<provider/your-mid-tier-model>" },
+    "sp-strong": { "description": "Architecture, complex debugging, escalation", "mode": "subagent", "model": "<provider/your-strongest-model>" }
+  }
+}
+```
+
+Each `model` is a `provider/model-id` (e.g. `anthropic/claude-haiku-4-20250514`)
+for a model you already have configured in OpenCode. The file is parsed
+leniently (comments allowed) and optional — a missing or malformed file never
+breaks startup. Defining the same agents in your own `opencode.json` also
+works; your config always wins per agent.
+
+Without these definitions, `task` (V1) or `subagent` (V2) calls naming a tier
+agent fail — there is no fallback.
+
+For the full contract — precedence rules and the optional `sp-review-*`
+reviewer agents — see
+[docs/README.opencode.md](https://github.com/obra/superpowers/blob/main/docs/README.opencode.md#model-tiers).
+
 ## Migrating from the old symlink-based install
 
 If you previously installed superpowers using `git clone` and symlinks, remove the old setup:

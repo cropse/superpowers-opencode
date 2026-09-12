@@ -17,6 +17,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,53 @@ const extractAndStripFrontmatter = (content) => {
   return { frontmatter, content: body };
 };
 
+// Normalize a path: trim whitespace, expand ~, resolve to absolute
+const normalizePath = (p, homeDir) => {
+  if (!p || typeof p !== 'string') return null;
+  let normalized = p.trim();
+  if (!normalized) return null;
+  if (normalized.startsWith('~/')) {
+    normalized = path.join(homeDir, normalized.slice(2));
+  } else if (normalized === '~') {
+    normalized = homeDir;
+  }
+  return path.resolve(normalized);
+};
+
+// Strip JSONC comments (line + block) and parse. Returns null on missing file
+// or parse failure — agent injection is best-effort and must never break startup.
+const parseJsoncFile = (filePath) => {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const stripped = raw
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '')
+      .trim();
+    if (!stripped) return null;
+    const parsed = JSON.parse(stripped);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+// Merge subagent definitions from superpowers.jsonc into the live config.
+// User's own config (opencode.jsonc) wins per-agent — the file only fills
+// gaps, so users override tiers without touching this file. Shared by V1
+// (config hook, below) — best-effort: a missing or malformed file never
+// breaks startup.
+const mergeSuperpowersAgents = (config, configDir) => {
+  const superpowersConfig = parseJsoncFile(path.join(configDir, 'superpowers.jsonc'));
+  const fileAgents = superpowersConfig?.agent;
+  if (!fileAgents || typeof fileAgents !== 'object') return;
+  config.agent = config.agent || {};
+  for (const [name, def] of Object.entries(fileAgents)) {
+    if (!config.agent[name] && def && typeof def === 'object') {
+      config.agent[name] = def;
+    }
+  }
+};
+
 // Tool mapping injected into the bootstrap, differentiated by host flavor.
 // V1 (OpenCode 1.18.x) and V2 (OpenCode 2.0.4/2.0.7) expose different built-in
 // tools, so each flavor's injection path picks its own constant below.
@@ -84,6 +132,13 @@ When skills request actions, substitute OpenCode equivalents:
 - Run shell commands → \`bash\`
 - Search files → \`grep\`, \`glob\`
 - Fetch a URL → \`webfetch\`
+
+**Model tiers:** When a skill speaks in model tiers, dispatch:
+- "Cheap model" (mechanical tasks) → \`task(subagent_type="sp-cheap")\`
+- "Standard model" (integration, judgment, reviews) → \`task(subagent_type="sp-standard")\`
+- "Most capable model" (architecture, final review, escalation) → \`task(subagent_type="sp-strong")\`
+- Reviewer at tier X → \`sp-review-X\` (a different model family than the implementer); if undefined, \`sp-X\`
+- Any agent undefined in config → the most capable available agent
 
 Use OpenCode's native \`skill\` tool to list and load skills.`;
 
@@ -103,6 +158,13 @@ When skills request actions, substitute OpenCode equivalents:
 - Search files → \`grep\`, \`glob\`
 - Fetch a URL → \`webfetch\`
 - Search the web → \`websearch\`
+
+**Model tiers:** When a skill speaks in model tiers, dispatch:
+- "Cheap model" (mechanical tasks) → \`subagent(agent="sp-cheap")\`
+- "Standard model" (integration, judgment, reviews) → \`subagent(agent="sp-standard")\`
+- "Most capable model" (architecture, final review, escalation) → \`subagent(agent="sp-strong")\`
+- Reviewer at tier X → \`sp-review-X\` (a different model family than the implementer); if undefined, \`sp-X\`
+- Any agent undefined in config → the most capable available agent
 
 Use OpenCode's native \`skill\` tool to list and load skills.`;
 
@@ -213,10 +275,14 @@ const isChildSession = async (fetchSession, sessionID) => {
  * V1 Plugin Function (named export + default.server)
  *
  * Used by V1 (OpenCode 1.x): discovered via named export scanning.
- * Provides: config hook (V1 skills registration) + bootstrap injection
- * (experimental.chat.messages.transform).
+ * Provides: config hook (V1 skills registration + superpowers.jsonc agent
+ * merge) + bootstrap injection (experimental.chat.messages.transform).
  */
 export const SuperpowersPlugin = async ({ client, directory }) => {
+  const homeDir = os.homedir();
+  const envConfigDir = normalizePath(process.env.OPENCODE_CONFIG_DIR, homeDir);
+  const configDir = envConfigDir || path.join(homeDir, '.config/opencode');
+
   return {
     // Inject skills path into live config so OpenCode discovers superpowers skills
     // without requiring manual symlinks or config file edits.
@@ -230,6 +296,11 @@ export const SuperpowersPlugin = async ({ client, directory }) => {
       if (!config.skills.paths.includes(superpowersSkillsDir)) {
         config.skills.paths.push(superpowersSkillsDir);
       }
+
+      // Merge subagent definitions from superpowers.jsonc into the live config
+      // (see Model Tiers in docs/README.opencode.md). User's own config wins
+      // per-agent — this only fills gaps.
+      mergeSuperpowersAgents(config, configDir);
     },
 
     // Inject bootstrap into the first user message of each top-level session.
