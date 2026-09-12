@@ -1,6 +1,6 @@
 # This is fork of superpowers
 This is fork of superpowers for opencode optimization for subagent.
-check detail: https://github.com/cropse/superpowers-opencode/blob/main/docs/README.opencode.md
+check detail: https://github.com/cropse/superpowers-opencode/blob/feature/opencode/docs/README.opencode.md
 
 # Superpowers
 
@@ -232,7 +232,7 @@ already use it in another harness.
 - Tell OpenCode:
 
   ```
-  Fetch and follow instructions from https://github.com/cropse/superpowers-opencode/blob/main/.opencode/INSTALL.md
+  Fetch and follow instructions from https://github.com/cropse/superpowers-opencode/blob/feature/opencode/.opencode/INSTALL.md
   ```
 
 - Detailed docs: [docs/README.opencode.md](docs/README.opencode.md)
