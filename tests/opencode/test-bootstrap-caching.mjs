@@ -56,6 +56,7 @@ const result = {
   staleMentionMapping: bootstrapText(firstOutput).includes('@mention'),
   staleTaskMapping: bootstrapText(firstOutput).includes('`Task` tool with subagents'),
   mapsSubagentToTask: bootstrapText(firstOutput).includes('`task` with `subagent_type: "general"`'),
+  mapsAskUserQuestionToQuestion: bootstrapText(firstOutput).includes('`AskUserQuestion` → OpenCode\'s native `question` tool'),
   mapsMutationToApplyPatch: bootstrapText(firstOutput).includes('`apply_patch`'),
   firstReadCount: afterFirst.readCount,
   secondReadCount: afterSecond.readCount,
@@ -139,6 +140,9 @@ function assertPresentBootstrap(result) {
   }
   if (!result.mapsSubagentToTask) {
     failures.push('expected OpenCode bootstrap to map general-purpose subagents to task with subagent_type');
+  }
+  if (!result.mapsAskUserQuestionToQuestion) {
+    failures.push('expected OpenCode bootstrap to map AskUserQuestion to the native question tool');
   }
   if (!result.mapsMutationToApplyPatch) {
     failures.push('expected OpenCode bootstrap to map file mutation to apply_patch');
