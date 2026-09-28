@@ -66,6 +66,7 @@ tests=(
     "test-session-bootstrap.sh"
     "test-skill-registration.sh"
     "test-agent-config.sh"
+    "test-agent-config-v2.sh"
 )
 
 # Integration tests (require OpenCode)

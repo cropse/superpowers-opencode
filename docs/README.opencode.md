@@ -124,7 +124,9 @@ The plugin does three things, using host-flavor-specific APIs where the two host
 1. **Registers the skills directory** so OpenCode discovers all superpowers skills without symlinks or manual config.
     - **V1:** via the `config` hook, injecting into `config.skills.paths`
     - **V2:** via the `setup()` function using `ctx.skill.transform()` (V2 native API, confirmed active at runtime)
-2. **Merges subagent definitions** from `superpowers.jsonc` (see [Model Tiers](#model-tiers)) into the live config, via the same V1 `config` hook used for skills registration. This is best-effort: a missing or malformed file never breaks startup.
+2. **Merges subagent definitions** from `superpowers.jsonc` (see [Model Tiers](#model-tiers)) so `sp-cheap`/`sp-standard`/`sp-strong`/`sp-review-*` are available as dispatchable agents. This is best-effort: a missing or malformed file never breaks startup.
+    - **V1:** via the same `config` hook used for skills registration
+    - **V2:** via `ctx.agent.transform()` (V2 native agent-registration API; `provider/model-id` strings are parsed into the structured model object the draft expects)
 3. **Injects bootstrap context** with a flavor-specific tool mapping: V1 sessions get the V1 tool names below, and V2 sessions get the V2 names.
     - **V1:** via `experimental.chat.messages.transform` hook
     - **V2:** via `ctx.session.hook("context")` — the V2 equivalent (confirmed active at runtime)
@@ -215,11 +217,12 @@ as a proper subagent with a `description` (required by OpenCode) and
 
 **Option 2 — `superpowers.jsonc` in your OpenCode config directory**
 (`~/.config/opencode/superpowers.jsonc`, or the directory in
-`$OPENCODE_CONFIG_DIR`). The plugin's `config` hook merges the `agent` block
-from this file into the live config, filling gaps only — **your own config
-wins per agent**, so you can override a tier without deleting the rest.
-Parsing is lenient (line and block comments supported), and a missing or
-malformed file is silently ignored so it never breaks startup:
+`$OPENCODE_CONFIG_DIR`). The plugin merges the `agent` block from this file
+into the live config on both V1 (`config` hook) and V2 (`ctx.agent.transform()`),
+filling gaps only — **your own config wins per agent**, so you can override a
+tier without deleting the rest. Parsing is lenient (line and block comments
+supported), and a missing or malformed file is silently ignored so it never
+breaks startup:
 
 ```jsonc
 {

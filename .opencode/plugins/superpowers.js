@@ -81,6 +81,15 @@ const normalizePath = (p, homeDir) => {
   return path.resolve(normalized);
 };
 
+// OpenCode config directory: $OPENCODE_CONFIG_DIR if set, else ~/.config/opencode.
+// Shared by V1 (config hook) and V2 (setup) so both flavors resolve
+// superpowers.jsonc from the same place.
+const resolveConfigDir = () => {
+  const homeDir = os.homedir();
+  const envConfigDir = normalizePath(process.env.OPENCODE_CONFIG_DIR, homeDir);
+  return envConfigDir || path.join(homeDir, '.config/opencode');
+};
+
 // Strip JSONC comments (line + block) and parse. Returns null on missing file
 // or parse failure — agent injection is best-effort and must never break startup.
 const parseJsoncFile = (filePath) => {
@@ -112,6 +121,59 @@ const mergeSuperpowersAgents = (config, configDir) => {
     if (!config.agent[name] && def && typeof def === 'object') {
       config.agent[name] = def;
     }
+  }
+};
+
+// Parse a "provider/model[-id-with-slashes]" string (the schema superpowers.jsonc
+// and opencode.json both use for model tiers) into the structured
+// { providerID, id } shape the V2 agent draft's `model` field expects. Splits
+// on the first slash only, so model IDs containing '/' survive intact.
+const parseModelString = (value) => {
+  if (typeof value !== 'string') return null;
+  const idx = value.indexOf('/');
+  if (idx <= 0 || idx === value.length - 1) return null;
+  return { providerID: value.slice(0, idx), id: value.slice(idx + 1) };
+};
+
+// V2 equivalent of mergeSuperpowersAgents: registers the same superpowers.jsonc
+// agent block via ctx.agent.transform(), the V2 native agent-registration API
+// (used internally by OpenCode's own bundled config/plan agent plugins,
+// observed on the 2.0.4-2.0.18 host builds — undocumented in the public
+// @opencode-ai/plugin types as of this writing). Feature-detected: if a future
+// V2 release removes or reshapes ctx.agent, this silently no-ops rather than
+// breaking plugin activation. "User wins per agent" is implemented by only
+// filling fields on agents draft.get() reports as not yet defined — agents
+// declared via opencode.json's own `agent` block (loaded into the draft
+// before plugins run) are left untouched.
+const registerSuperpowersAgentsV2 = async (ctx, configDir) => {
+  if (!ctx.agent || typeof ctx.agent.transform !== 'function') return;
+  const superpowersConfig = parseJsoncFile(path.join(configDir, 'superpowers.jsonc'));
+  const fileAgents = superpowersConfig?.agent;
+  if (!fileAgents || typeof fileAgents !== 'object') return;
+
+  try {
+    await ctx.agent.transform((draft) => {
+      if (typeof draft.get !== 'function' || typeof draft.update !== 'function') return;
+      for (const [name, def] of Object.entries(fileAgents)) {
+        if (!def || typeof def !== 'object') continue;
+        const alreadyDefined = draft.get(name) !== undefined;
+        try {
+          draft.update(name, (agent) => {
+            if (alreadyDefined) return; // user's own config wins per agent
+            if (typeof def.description === 'string') agent.description = def.description;
+            if (typeof def.mode === 'string') agent.mode = def.mode;
+            const model = parseModelString(def.model);
+            if (model) agent.model = model;
+          });
+        } catch (err) {
+          console.error(`[superpowers] agent "${name}" rejected by host, skipping:`, err);
+        }
+      }
+    });
+  } catch (err) {
+    // Never break plugin activation: mirrors the V1 config hook's
+    // best-effort contract for the same superpowers.jsonc merge.
+    console.error('[superpowers] V2 agent registration failed:', err);
   }
 };
 
@@ -280,9 +342,7 @@ const isChildSession = async (fetchSession, sessionID) => {
  * merge) + bootstrap injection (experimental.chat.messages.transform).
  */
 export const SuperpowersPlugin = async ({ client, directory }) => {
-  const homeDir = os.homedir();
-  const envConfigDir = normalizePath(process.env.OPENCODE_CONFIG_DIR, homeDir);
-  const configDir = envConfigDir || path.join(homeDir, '.config/opencode');
+  const configDir = resolveConfigDir();
 
   return {
     // Inject skills path into live config so OpenCode discovers superpowers skills
@@ -341,7 +401,7 @@ export const SuperpowersPlugin = async ({ client, directory }) => {
  * V2 Setup Function (default.setup)
  *
  * Called by V2 PluginSupervisor (packages/core/src/plugin/supervisor.ts).
- * Performs two things:
+ * Performs three things:
  *
  * 1. Registers every skills/<name>/SKILL.md as a native Skill.Info object
  *    via ctx.skill.transform((draft) => draft.add(info)).
@@ -352,7 +412,10 @@ export const SuperpowersPlugin = async ({ client, directory }) => {
  *    is `path` — renamed from `location` in upstream commit 199aabe9e2,
  *    first released in v2.0.4.
  *    See packages/core/src/plugin/skill.ts and packages/schema/src/skill.ts.
- * 2. Injects bootstrap context via ctx.session.hook("context"), the V2
+ * 2. Merges subagent definitions from superpowers.jsonc via
+ *    ctx.agent.transform() — the V2 counterpart of the V1 config hook's
+ *    mergeSuperpowersAgents (see registerSuperpowersAgentsV2 above).
+ * 3. Injects bootstrap context via ctx.session.hook("context"), the V2
  *    equivalent of V1's experimental.chat.messages.transform.
  */
 async function setup(ctx) {
@@ -406,7 +469,12 @@ async function setup(ctx) {
     console.error('[superpowers] skill registration failed:', err);
   }
 
-  // 2. Inject bootstrap into first user message via V2 session context hook
+  // 2. Merge subagent definitions from superpowers.jsonc (see Model Tiers in
+  // docs/README.opencode.md). Best-effort and self-contained — errors are
+  // caught inside registerSuperpowersAgentsV2 and never reach here.
+  await registerSuperpowersAgentsV2(ctx, resolveConfigDir());
+
+  // 3. Inject bootstrap into first user message via V2 session context hook
   try {
     await ctx.session.hook('context', async (event) => {
       try {
